@@ -1,10 +1,44 @@
 import { Pool } from 'pg';
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  max: 5,
-  idleTimeoutMillis: 30_000
-});
+let pool: Pool | null = null;
+
+function getPool(): Pool {
+  if (!pool) {
+    let dbUrl = process.env.DATABASE_URL;
+    
+    if (!dbUrl) {
+      throw new Error('DATABASE_URL environment variable is not set. Please configure it in Vercel environment variables.');
+    }
+    
+    dbUrl = dbUrl.trim();
+    
+    if (!dbUrl || dbUrl.length < 10) {
+      throw new Error('DATABASE_URL appears to be invalid or too short');
+    }
+    
+    let cleanDbUrl = dbUrl;
+    cleanDbUrl = cleanDbUrl.replace(/[?&]sslmode=[^&]*/g, '');
+    cleanDbUrl = cleanDbUrl.replace(/[?&]$/, '');
+    
+    const requiresSSL = cleanDbUrl.includes('supabase') || 
+                       cleanDbUrl.includes('neon.tech') ||
+                       process.env.NODE_ENV === 'production' ||
+                       process.env.VERCEL;
+    
+    const sslConfig = requiresSSL ? { 
+      rejectUnauthorized: false
+    } : undefined;
+    
+    pool = new Pool({
+      connectionString: cleanDbUrl,
+      max: 5,
+      idleTimeoutMillis: 30_000,
+      ssl: sslConfig
+    });
+  }
+  
+  return pool;
+}
 
 export type StatsRow = {
   id: number;
@@ -16,7 +50,8 @@ export type StatsRow = {
 };
 
 export async function getLatestStats(): Promise<StatsRow | null> {
-  const result = await pool.query<StatsRow>(
+  const dbPool = getPool();
+  const result = await dbPool.query<StatsRow>(
     `SELECT id, metric, value, version, updated_at, last_accessed_at
      FROM stats
      ORDER BY updated_at DESC
@@ -27,7 +62,8 @@ export async function getLatestStats(): Promise<StatsRow | null> {
 }
 
 export async function touchStatsRow(id: number, previousUpdatedAt: string): Promise<StatsRow | null> {
-  const result = await pool.query<StatsRow>(
+  const dbPool = getPool();
+  const result = await dbPool.query<StatsRow>(
     `UPDATE stats
      SET last_accessed_at = NOW(),
          version = version + 1,
@@ -42,6 +78,9 @@ export async function touchStatsRow(id: number, previousUpdatedAt: string): Prom
 }
 
 export async function closePool() {
-  await pool.end();
+  if (pool) {
+    await pool.end();
+    pool = null;
+  }
 }
 

@@ -12,9 +12,22 @@ export function getRedis() {
   }
 
   if (!redisClient) {
-    redisClient = new Redis(process.env.REDIS_URL, {
+    const redisUrl = process.env.REDIS_URL;
+    const isSSL = redisUrl?.startsWith('rediss://');
+    
+    redisClient = new Redis(redisUrl, {
       lazyConnect: true,
-      maxRetriesPerRequest: 2
+      maxRetriesPerRequest: 3,
+      retryStrategy: (times) => {
+        const delay = Math.min(times * 50, 2000);
+        return delay;
+      },
+      connectTimeout: 10000,
+      ...(isSSL && {
+        tls: {
+          rejectUnauthorized: false
+        }
+      })
     });
   }
 

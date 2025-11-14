@@ -35,18 +35,14 @@ async function readRedisCache(): Promise<ApiResponse | undefined> {
   try {
     const client = await ensureRedisConnection();
     if (!client) {
-      // console.log('[REDIS] No client available (REDIS_URL not set or mock)'); // was used for testing
       return undefined;
     }
     const raw = await client.get(CACHE_KEY);
     if (!raw) {
-      // console.log('[REDIS] Cache miss - key not found'); // was used for testing
       return undefined;
     }
-    // console.log('[REDIS] Cache hit - found data'); // was used for testing
     return JSON.parse(raw) as ApiResponse;
   } catch (error) {
-    // console.error('[REDIS] Error reading cache:', error); // was used for testing
     return undefined;
   }
 }
@@ -55,17 +51,10 @@ async function writeRedisCache(payload: ApiResponse) {
   try {
     const client = await ensureRedisConnection();
     if (!client) {
-      // console.log('[REDIS] Write skipped - no client available'); // was used for testing
       return;
     }
-    const result = await client.set(CACHE_KEY, JSON.stringify(payload), 'EX', 60);
-    if (result === 'OK') {
-      // console.log('[REDIS] Successfully wrote cache (TTL: 60s)'); // was used for testing
-    } else {
-      // console.log('[REDIS] Write returned unexpected result:', result); // was used for testing
-    }
+    await client.set(CACHE_KEY, JSON.stringify(payload), 'EX', 60);
   } catch (error) {
-    // console.error('[REDIS] Error writing cache:', error); // was used for testing
   }
 }
 
@@ -75,23 +64,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   try {
-    // Check in-memory LRU cache first
     const localCache = readCache<StatsPayload>(CACHE_KEY);
     if (localCache) {
-      // console.log('[CACHE] Hit: local LRU cache'); // was used for testing
       return res.status(200).json(localCache);
     }
 
-    // Check Redis cache
     const redisCache = await readRedisCache();
     if (redisCache) {
-      // console.log('[CACHE] Hit: Redis cache'); // was used for testing
-      // Populate local cache from Redis for faster subsequent access
       writeCache(CACHE_KEY, { ...redisCache, source: 'redis' });
       return res.status(200).json({ ...redisCache, source: 'redis' });
     }
-
-    // console.log('[CACHE] Miss: checking database'); // was used for testing
 
     const lockAcquired = await acquireLock();
     if (!lockAcquired) {
@@ -128,11 +110,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     await writeRedisCache(payload);
     await releaseLock();
 
-    // console.log('[CACHE] Written to local cache, Redis cache, and stale cache'); // was used for testing
     return res.status(200).json(payload);
   } catch (error) {
     await releaseLock().catch(() => undefined);
-    return res.status(500).json({ error: (error as Error).message || 'Unexpected error' });
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    
+    return res.status(500).json({ 
+      error: errorMessage
+    });
   }
 }
 
